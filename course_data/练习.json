@@ -1,0 +1,46 @@
+{
+  "title": "软件工程综合练习题",
+  "course": "软件工程",
+  "version": "1.0",
+  "questions": [
+    {
+      "id": "se_001",
+      "type": "single_choice",
+      "text": "在软件需求工程中，下列哪一项不属于功能需求？",
+      "options": [
+        {"id": "A", "text": "用户登录时需进行身份验证"},
+        {"id": "B", "text": "系统应在1秒内响应请求"},
+        {"id": "C", "text": "支持管理员对用户进行管理"},
+        {"id": "D", "text": "系统应提供数据备份功能"}
+      ],
+      "answer": "B",
+      "explanation": "性能要求（如响应时间）属于非功能需求。",
+      "difficulty": "medium",
+      "tags": ["需求工程", "功能需求", "非功能需求"]
+    },
+    {
+      "id": "se_002",
+      "type": "true_false",
+      "text": "敏捷开发方法强调编写详尽的文档胜过可工作的软件。",
+      "answer": false,
+      "explanation": "敏捷宣言强调：可工作的软件胜过详尽的文档。",
+      "difficulty": "easy",
+      "tags": ["敏捷开发", "项目管理"]
+    },
+    {
+      "id": "se_003",
+      "type": "multiselect",
+      "text": "下列哪些属于GoF设计模式中的创建型模式？",
+      "options": [
+        {"id": "A", "text": "工厂方法（Factory Method）"},
+        {"id": "B", "text": "适配器（Adapter）"},
+        {"id": "C", "text": "单例（Singleton）"},
+        {"id": "D", "text": "观察者（Observer）"}
+      ],
+      "answer": ["A", "C"],
+      "explanation": "创建型模式包括：工厂方法、抽象工厂、建造者、原型、单例。",
+      "difficulty": "hard",
+      "tags": ["设计模式", "创建型模式"]
+    }
+  ]
+}

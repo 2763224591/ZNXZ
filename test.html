@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neo4j 数据可视化</title>
+    <!-- Cytoscape.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.23.0/cytoscape.min.js"></script>
+    <!-- Neo4j Driver -->
+    <script src="https://cdn.jsdelivr.net/npm/neo4j-driver@5.11.0/lib/browser/neo4j-web.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f7fa;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            position: relative;
+            z-index: 1000;
+        }
+
+        .header h1 {
+            font-size: 1.5em;
+            font-weight: 600;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .control-btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9em;
+        }
+
+        .control-btn:hover {
+            background: rgba(255,255,255,0.3);
+            transform: translateY(-1px);
+        }
+
+        .query-input {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 20px;
+            width: 300px;
+            background: rgba(255,255,255,0.9);
+            color: #333;
+        }
+
+        .query-input::placeholder {
+            color: #999;
+        }
+
+        #cy-container {
+            width: 100%;
+            height: calc(100vh - 70px);
+            background: white;
+            position: relative;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 100;
+            background: rgba(255,255,255,0.8);
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .status-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px 20px;
+            font-size: 0.9em;
+        }
+
+        .error-message {
+            background: #ff6b6b;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            margin: 20px;
+            border-radius: 5px;
+        }
+
+        .legend {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255,255,255,0.95);
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            max-width: 250px;
+            font-size: 0.9em;
+            z-index: 1000;
+        }
+
+        .legend h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        /* Cytoscape 样式 */
+        .cy-title {
+            position: absolute;
+            background: rgba(255,255,255,0.9);
+            padding: 5px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 999;
+            pointer-events: none;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔍 Neo4j GraphRAG 数据可视化</h1>
+        <div class="controls">
+            <input type="text" class="query-input" id="cypherQuery" placeholder="输入Cypher查询..." value="MATCH (n)-[r]-() RETURN n, r LIMIT 100">
+            <button class="control-btn" onclick="executeQuery()">🔍 执行查询</button>
+            <button class="control-btn" onclick="resetView()">🔄 重置视图</button>
+            <button class="control-btn" id="physicsToggle" onclick="togglePhysics()">⚡ 物理引擎:开启</button>
+        </div>
+    </div>
+
+    <div id="cy-container">
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>正在连接Neo4j数据库...</p>
+        </div>
+
+        <div class="legend" id="legend" style="display:none;">
+            <h3>图例</h3>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #667eea;"></div>
+                <span>实体节点</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #764ba2;"></div>
+                <span>关系节点</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #f093fb;"></div>
+                <span>属性节点</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="status-bar" id="statusBar">
+        准备就绪 - 等待数据库连接
+    </div>
+
+    <script>
+        let cy; // Cytoscape实例
+        let driver; // Neo4j驱动实例
+        let physicsEnabled = true;
+        let titleElement = null; // 标题元素
+        let isInitialized = false;
+
+        // Neo4j 连接配置
+        const neo4jConfig = {
+            server_url: "bolt://localhost:7687", // 替换为您的Neo4j服务器URL
+            server_user: "neo4j",                // 替换为您的用户名
+            server_password: "password"         // 替换为您的密码
+        };
+
+        // 初始查询（包含关系和节点）
+        const DEFAULT_QUERY = "MATCH (n)-[r]-() RETURN n, r LIMIT 25";
+
+        // 确保Neo4j驱动加载完成
+        function ensureDriverLoaded() {
+            return new Promise((resolve, reject) => {
+                if (typeof neo4j !== 'undefined') {
+                    resolve();
+                } else {
+                    let attempts = 0;
+                    const checkInterval = setInterval(() => {
+                        attempts++;
+                        if (typeof neo4j !== 'undefined') {
+                            clearInterval(checkInterval);
+                            resolve();
+                        } else if (attempts > 10) {
+                            clearInterval(checkInterval);
+                            reject(new Error('Neo4j驱动加载失败'));
+                        }
+                    }, 300);
+                }
+            });
+        }
+
+        // 初始化Cytoscape
+        function initCytoscape() {
+            // 创建标题元素
+            titleElement = document.createElement('div');
+            titleElement.className = 'cy-title';
+            titleElement.style.display = 'none';
+            document.getElementById('cy-container').appendChild(titleElement);
+
+            // Cytoscape配置
+            cy = cytoscape({
+                container: document.getElementById('cy-container'),
+                style: [
+                    // 节点样式
+                    {
+                        selector: 'node',
+                        style: {
+                            'background-color': '#667eea',
+                            'width': 90,
+                            'height': 90,
+                            'label': 'data(label)',
+                            'font-size': 10,
+                            'text-valign': 'center',
+                            'text-halign': 'center',
+                            'text-wrap': 'wrap',
+                            'text-max-width': 100,
+                            'overlay-opacity': 0,
+                            'z-index': 10
+                        }
+                    },
+
+                    // 关系样式
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 3,
+                            'line-color': '#764ba2',
+                            'target-arrow-color': '#764ba2',
+                            'target-arrow-shape': 'triangle',
+                            'arrow-scale': 1,
+                            'curve-style': 'bezier',
+                            'label': 'data(label)',
+                            'font-size': 10,
+                            'text-background-color': 'white',
+                            'text-background-opacity': 0.8,
+                            'text-background-padding': '3px',
+                            'text-background-shape': 'roundrectangle',
+                            'text-margin-y': -10
+                        }
+                    },
+
+                    // 高亮样式
+                    {
+                        selector: 'node:selected',
+                        style: {
+                            'border-width': 3,
+                            'border-color': '#ff6b6b'
+                        }
+                    },
+                    {
+                        selector: 'edge:selected',
+                        style: {
+                            'line-color': '#ff6b6b',
+                            'target-arrow-color': '#ff6b6b',
+                            'width': 5
+                        }
+                    }
+                ],
+
+                layout: {
+                    name: 'cose',
+                    animate: true,
+                    animationDuration: 500,
+                    randomize: true,
+                    fit: true,
+                    padding: 100,
+                    gravity: 0.25,
+                    repulsion: 200,
+                    nodeRepulsion: 100000
+                }
+            });
+
+            // 添加悬停效果
+            cy.on('mouseover', 'node', function(event) {
+                const node = event.target;
+                titleElement.innerHTML = formatNodeTooltip(node.data());
+                titleElement.style.display = 'block';
+                titleElement.style.left = (event.renderedPosition.x + 15) + 'px';
+                titleElement.style.top = (event.renderedPosition.y - 15) + 'px';
+            });
+
+            cy.on('mouseover', 'edge', function(event) {
+                const edge = event.target;
+                titleElement.innerHTML = formatEdgeTooltip(edge.data());
+                titleElement.style.display = 'block';
+                titleElement.style.left = (event.renderedPosition.x + 15) + 'px';
+                titleElement.style.top = (event.renderedPosition.y - 15) + 'px';
+            });
+
+            cy.on('mouseout', function() {
+                titleElement.style.display = 'none';
+            });
+
+            // 添加点击事件
+            cy.on('click', 'node', function(event) {
+                const node = event.target;
+                updateStatus(`已选节点: ${node.data().label} (${node.data().type})`);
+            });
+
+            cy.on('click', 'edge', function(event) {
+                const edge = event.target;
+                updateStatus(`已选关系: ${edge.data().label}`);
+            });
+        }
+
+        // 格式化节点提示
+        function formatNodeTooltip(data) {
+            let html = `<strong>${data.label}</strong><br>类型: ${data.type}`;
+            if (data.properties) {
+                html += '<hr style="margin:5px 0;">';
+                for (const [key, value] of Object.entries(data.properties)) {
+                    html += `${key}: ${value}<br>`;
+                }
+            }
+            return html;
+        }
+
+        // 格式化关系提示
+        function formatEdgeTooltip(data) {
+            let html = `<strong>${data.label}</strong>`;
+            if (data.properties) {
+                html += '<hr style="margin:5px 0;">';
+                for (const [key, value] of Object.entries(data.properties)) {
+                    html += `${key}: ${value}<br>`;
+                }
+            }
+            return html;
+        }
+
+        // 初始化Neo4j驱动
+        function initDriver() {
+            try {
+                if (typeof neo4j === 'undefined') {
+                    throw new Error('Neo4j驱动不可用');
+                }
+
+                driver = neo4j.driver(
+                    neo4jConfig.server_url,
+                    neo4j.auth.basic(neo4jConfig.server_user, neo4jConfig.server_password)
+                );
+
+                updateStatus("已连接到Neo4j数据库");
+                document.getElementById('legend').style.display = 'block';
+                return true;
+            } catch (error) {
+                showError("驱动初始化失败: " + error.message);
+                return false;
+            }
+        }
+
+        // 执行Cypher查询
+        async function executeCypherQuery(query) {
+            if (!driver) {
+                if (!initDriver()) {
+                    return;
+                }
+            }
+
+            const session = driver.session();
+            try {
+                document.getElementById('loading').style.display = 'block';
+                updateStatus("正在执行查询...");
+
+                const result = await session.run(query);
+                const elements = [];
+                const nodeMap = new Map(); // 用于跟踪已添加的节点
+
+                // 处理结果记录
+                for (const record of result.records) {
+                    // 处理每个字段
+                    for (const key of record.keys) {
+                        const value = record.get(key);
+
+                        // 1. 处理节点
+                        if (isNode(value)) {
+                            const nodeId = value.identity.toString();
+                            if (!nodeMap.has(nodeId)) {
+                                nodeMap.set(nodeId, true);
+                                elements.push(createNodeElement(value));
+                            }
+                        }
+
+                        // 2. 处理关系
+                        else if (isRelationship(value)) {
+                            // 添加起始节点
+                            const startNodeId = value.start.toString();
+                            if (!nodeMap.has(startNodeId)) {
+                                const startNode = await getNodeById(session, value.start);
+                                if (startNode) {
+                                    nodeMap.set(startNodeId, true);
+                                    elements.push(createNodeElement(startNode));
+                                }
+                            }
+
+                            // 添加结束节点
+                            const endNodeId = value.end.toString();
+                            if (!nodeMap.has(endNodeId)) {
+                                const endNode = await getNodeById(session, value.end);
+                                if (endNode) {
+                                    nodeMap.set(endNodeId, true);
+                                    elements.push(createNodeElement(endNode));
+                                }
+                            }
+
+                            // 添加关系
+                            elements.push(createEdgeElement(value));
+                        }
+
+                        // 3. 处理路径
+                        else if (isPath(value)) {
+                            for (const segment of value.segments) {
+                                // 添加起始节点
+                                const startNodeId = segment.start.identity.toString();
+                                if (!nodeMap.has(startNodeId)) {
+                                    nodeMap.set(startNodeId, true);
+                                    elements.push(createNodeElement(segment.start));
+                                }
+
+                                // 添加结束节点
+                                const endNodeId = segment.end.identity.toString();
+                                if (!nodeMap.has(endNodeId)) {
+                                    nodeMap.set(endNodeId, true);
+                                    elements.push(createNodeElement(segment.end));
+                                }
+
+                                // 添加关系
+                                elements.push(createEdgeElement(segment.relationship));
+                            }
+
+                            // 添加路径的结束节点
+                            const endNodeId = value.end.identity.toString();
+                            if (!nodeMap.has(endNodeId)) {
+                                nodeMap.set(endNodeId, true);
+                                elements.push(createNodeElement(value.end));
+                            }
+                        }
+                    }
+                }
+
+                // 渲染结果
+                renderGraph(elements);
+
+                // 更新状态
+                document.getElementById('loading').style.display = 'none';
+                updateStatus(`查询完成。显示 ${nodeMap.size} 个节点和 ${elements.length - nodeMap.size} 条关系`);
+
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                showError("查询执行失败: " + error.message);
+                console.error("查询错误:", error);
+            } finally {
+                await session.close();
+            }
+        }
+
+        // 判断是否为节点
+        function isNode(value) {
+            return value && value.identity !== undefined && value.labels !== undefined;
+        }
+
+        // 判断是否为关系
+        function isRelationship(value) {
+            return value && value.start !== undefined && value.end !== undefined && value.type !== undefined;
+        }
+
+        // 判断是否为路径
+        function isPath(value) {
+            return value && value.start !== undefined && value.end !== undefined && value.segments !== undefined;
+        }
+
+        // 根据ID获取节点
+        async function getNodeById(session, nodeId) {
+            try {
+                const result = await session.run('MATCH (n) WHERE id(n) = $id RETURN n', { id: nodeId.toNumber() });
+                if (result.records.length > 0) {
+                    return result.records[0].get('n');
+                }
+                return null;
+            } catch (error) {
+                console.error('通过ID获取节点错误:', error);
+                return null;
+            }
+        }
+
+        // 创建节点元素
+        function createNodeElement(neo4jNode) {
+            const id = neo4jNode.identity.toString();
+            const type = neo4jNode.labels.join(', ') || '未知类型';
+
+            // 特殊处理：Document节点显示name属性，其他节点显示id属性
+            let label;
+            if (neo4jNode.labels.includes('Document')) {
+                label = neo4jNode.properties.name || '文档节点';
+            } else {
+                label = neo4jNode.properties.id || neo4jNode.properties.name ||
+                        neo4jNode.labels[0] || '节点';
+            }
+
+            return {
+                group: 'nodes',
+                data: {
+                    id: id,
+                    label: label,
+                    type: type,
+                    properties: neo4jNode.properties
+                }
+            };
+        }
+
+        // 创建关系元素
+        function createEdgeElement(neo4jRelationship) {
+            return {
+                group: 'edges',
+                data: {
+                    id: `${neo4jRelationship.identity || Date.now()}`,
+                    source: neo4jRelationship.start.toString(),
+                    target: neo4jRelationship.end.toString(),
+                    label: neo4jRelationship.type,
+                    properties: neo4jRelationship.properties
+                }
+            };
+        }
+
+        // 渲染图
+        function renderGraph(elements) {
+            if (!cy) {
+                initCytoscape();
+            }
+
+            cy.elements().remove();
+            cy.add(elements);
+
+            // 应用布局
+            const layout = cy.layout({
+                name: physicsEnabled ? 'cose' : 'grid',
+                animate: true,
+                animationDuration: 500,
+                fit: true,
+                padding: 50,
+                nodeDimensionsIncludeLabels: true,
+                idealEdgeLength: 150,
+                nodeRepulsion: 50000,
+                edgeElasticity: 0.1
+            });
+
+            layout.run();
+            cy.fit();
+        }
+
+        // 初始化可视化
+        async function initVisualization() {
+            try {
+                updateStatus("正在初始化可视化...");
+
+                // 确保驱动加载完成
+                await ensureDriverLoaded();
+
+                // 初始化驱动
+                if (!initDriver()) {
+                    return;
+                }
+
+                // 初始化Cytoscape
+                initCytoscape();
+
+                // 执行初始查询
+                executeCypherQuery(DEFAULT_QUERY);
+
+                isInitialized = true;
+
+            } catch (error) {
+                console.error("初始化错误:", error);
+                showError("初始化失败: " + error.message);
+            }
+        }
+
+        // 执行查询
+        function executeQuery() {
+            const query = document.getElementById('cypherQuery').value.trim();
+            if (!query) {
+                alert('请输入Cypher查询。');
+                return;
+            }
+
+            if (!isInitialized) {
+                initVisualization().then(() => {
+                    executeCypherQuery(query);
+                });
+            } else {
+                executeCypherQuery(query);
+            }
+        }
+
+        // 重置视图
+        function resetView() {
+            updateStatus("正在重置视图...");
+            executeCypherQuery(DEFAULT_QUERY);
+        }
+
+        // 切换物理引擎
+        function togglePhysics() {
+            physicsEnabled = !physicsEnabled;
+            document.getElementById('physicsToggle').textContent =
+                `⚡ 物理引擎:${physicsEnabled ? '开启' : '关闭'}`;
+
+            if (cy) {
+                const layout = cy.layout({
+                    name: physicsEnabled ? 'cose' : 'grid',
+                    animate: true,
+                    animationDuration: 300,
+                    fit: true,
+                    padding: 50,
+                    nodeDimensionsIncludeLabels: true,
+                    idealEdgeLength: 150,
+                    nodeRepulsion: 50000
+                });
+
+                layout.run();
+                updateStatus(`物理引擎: ${physicsEnabled ? '开启' : '关闭'}`);
+            }
+        }
+
+        // 更新状态
+        function updateStatus(message) {
+            document.getElementById('statusBar').textContent = message;
+        }
+
+        // 显示错误
+        function showError(message) {
+            const loading = document.getElementById('loading');
+            loading.innerHTML = `
+                <div class="error-message">
+                    <h3>⚠️ 错误</h3>
+                    <p>${message}</p>
+                    <p style="margin-top: 10px; font-size: 0.9em;">
+                        <strong>可能的解决方案:</strong><br>
+                        1. 检查Neo4j驱动脚本是否已加载<br>
+                        2. 验证您的网络连接<br>
+                        3. 确保Neo4j服务器正在运行<br>
+                        4. 确认您的Cypher查询包含关系
+                    </p>
+                    <button class="control-btn" onclick="location.reload()" style="margin-top: 15px;">🔄 重试</button>
+                </div>
+            `;
+            updateStatus("操作失败");
+        }
+
+        // 页面加载时初始化
+        window.addEventListener('load', function() {
+            setTimeout(initVisualization, 500);
+        });
+
+        // Ctrl+Enter执行查询
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'Enter') {
+                e.preventDefault();
+                executeQuery();
+            }
+        });
+    </script>
+</body>
+</html>
