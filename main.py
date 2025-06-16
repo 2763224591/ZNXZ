@@ -2,10 +2,14 @@
 
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
 from typing import List, Dict, Any, Optional, Tuple
-from flask import Flask, request, jsonify
 import threading
+import time
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+import uvicorn
 
 # 大模型接入
 from llm_api import LlmApi
@@ -18,13 +22,14 @@ from KnowledgeBaseManager import KnowledgeBaseManager
 
 from QueryProcessor import QueryProcessor
 
+
 # ================================
 # 9. 主系统类
 # ================================
 class SoftwareEngineeringAssistant:
     """软件工程课程小助手主系统"""
 
-    def __init__(self,llm,neo4j_settings: dict = None):
+    def __init__(self, llm, neo4j_settings: dict = None):
         # 创建配置管理器并注入Neo4j设置
         self.config = SystemConfig(neo4j_settings)
         self.db_manager = DatabaseManager(self.config)
@@ -33,7 +38,7 @@ class SoftwareEngineeringAssistant:
 
         print(f"软件工程课程小助手初始化完成")
 
-    def update_knowledge_base(self, paths: List[str]) -> Dict[str, bool]:
+    def update_knowledge_base(self, paths: List[str]) -> Dict[str, Any]:
         """更新知识库接口"""
         print("开始更新知识库...")
         results = self.kb_manager.sync_knowledge_base(paths)
@@ -75,14 +80,14 @@ class SoftwareEngineeringAssistant:
                 "course": "软件工程"
             }
 
+
 # ================================
-# 使用示例
+# 初始化与环境配置
 # ================================
 # Press the green button in the gutter to run the script.
 llm_api = LlmApi()
 print("=== 使用统一的LlmApi API ===")
 # 全局大模型实例
-app = Flask(__name__)
 Neo4jSetting = {
     "url": "bolt://localhost:7687",
     "username": "neo4j",
@@ -94,70 +99,171 @@ assistant = SoftwareEngineeringAssistant(llm_api, Neo4jSetting)
 status = assistant.get_system_status()
 print("系统状态:", status)
 
-@app.route('/ask', methods=['POST'])
-def handle_ask():
+# ================================
+# 任务状态管理
+# ================================
+# 使用一个字典来全局管理更新任务的状态
+# 包含 status: 'idle', 'running', 'finished', 'error'
+#      result: 存储任务完成或失败的结果
+update_task_status = {
+    "status": "idle",
+    "result": None
+}
+# 线程锁，用于确保对 `update_task_status` 的访问是线程安全的
+status_lock = threading.Lock()
+
+
+def run_knowledge_base_update():
+    """在后台线程中运行的知识库更新函数"""
+    global update_task_status
+    try:
+        # 调用实际的更新逻辑
+        results = assistant.update_knowledge_base(["course_data/"])
+
+        # 线程安全地更新状态
+        with status_lock:
+            update_task_status["status"] = "finished"
+            # TODO 输出应该不匹配
+            update_task_status["result"] = results
+            print("知识库更新成功完成。")
+
+    except Exception as e:
+        # 线程安全地更新状态
+        with status_lock:
+            update_task_status["status"] = "error"
+            update_task_status["result"] = {"error": str(e)}
+            print(f"知识库更新时发生错误: {e}")
+
+
+# ================================
+# App配置
+# ================================
+
+# 添加请求模型
+class AskRequest(BaseModel):
+    question: str
+    chat_history: Optional[List[Tuple[str, str]]] = []
+
+
+class StatusResponse(BaseModel):
+    database_status: str
+    document_count: int
+    entity_count: int
+    file_count: int
+    course: str
+
+
+class UpdateResponse(BaseModel):
+    # TODO 应该需要修改
+    # 根据kb_manager.sync_knowledge_base的实际返回调整模型
+    # 这里假设返回的是一个字典，您可以根据实际情况修改
+    processed_files: Optional[int] = None
+    deleted_files: Optional[List[str]] = None
+    total_processed: Optional[int] = None
+    errors: Optional[List[str]] = None
+    message: Optional[str] = None  # 用于返回非成功时的消息
+
+
+# 新增：更新任务状态的响应模型
+class UpdateStatusResponse(BaseModel):
+    status: str
+    result: Optional[Dict[str, Any]] = None
+
+
+class AskResponse(BaseModel):
+    回答: str
+
+
+# app创建
+app = FastAPI(title="软件工程课程小助手", version="1.0.0")
+
+
+@app.post("/ask", response_model=AskResponse)
+async def handle_ask(request: AskRequest):
     """处理用户提问的API端点"""
-    data = request.json
-    question = data.get('question', '')
-    chat_history = data.get('chat_history', [])
-    print(question,"|",chat_history)
-    if not question:
-        return jsonify({"error": "Question is required"}), 400
+    # 检查更新任务状态，如果正在运行则禁止提问
+    with status_lock:
+        if update_task_status["status"] == "running":
+            raise HTTPException(status_code=409, detail="系统正在更新知识库，请稍后再试。")
+
+    if not request.question:
+        raise HTTPException(status_code=400, detail="Question is required")
 
     try:
-        response = assistant.ask(question, chat_history)
-        print(response, "/n", chat_history)
-        return jsonify({"回答": response})
+        response = assistant.ask(request.question, request.chat_history)
+        print(response)
+        print(request.chat_history)
+        return AskResponse(回答=response)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.route('/status', methods=['GET'])
-def handle_status():
+@app.get("/status", response_model=StatusResponse)
+async def handle_status():
     """获取系统状态的API端点"""
     try:
         status = assistant.get_system_status()
-        return jsonify(status)
+        return StatusResponse(**status)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.route('/update', methods=['GET'])
-def handle_update():
+@app.post("/update", response_model=UpdateResponse)  # 修改为POST，因为此操作会改变服务器状态
+async def handle_update():
     """更新知识库的API端点"""
-    results = assistant.update_knowledge_base(["course_data/"])
-    print(results)
-    return jsonify(results)
+    global update_task_status
+    with status_lock:
+        # 检查是否已有任务在运行
+        if update_task_status["status"] == "running":
+            return UpdateResponse(message="更新任务已在进行中，请勿重复发起。")
 
+        # 如果上一次任务已完成或出错，可以重置状态并发起新任务
+        print("接收到更新请求，开始后台更新任务。")
+        update_task_status["status"] = "running"
+        update_task_status["result"] = None
 
-def start_flask_app():
-    """启动Flask应用"""
-    app.run(host='localhost', port=9000, threaded=True)
+        # 创建并启动后台线程
+        update_thread = threading.Thread(target=run_knowledge_base_update)
+        update_thread.start()
+
+    return UpdateResponse(message="知识库更新任务已在后台启动。请通过 /update-status 接口查询进度。")
+
+@app.get("/update-status", response_model=UpdateStatusResponse)
+async def handle_update_status():
+    """获取知识库更新任务状态的API端点"""
+    with status_lock:
+        # 直接返回当前的全局状态
+        # 如果任务完成，可以将状态重置为idle，以便下次触发
+        if update_task_status["status"] in ["finished", "error"]:
+            response = UpdateStatusResponse(**update_task_status)
+            # 重置状态，以便可以发起下一次更新
+            update_task_status["status"] = "idle"
+            update_task_status["result"] = None
+            return response
+
+        return UpdateStatusResponse(**update_task_status)
+
+def start_fastapi_app():
+    """启动FastAPI应用"""
+    uvicorn.run(app, host="localhost", port=9000)
     print("Web服务已启动，监听端口 9000")
 
 
 if __name__ == "__main__":
-
     # 更新知识库 注意设定目录
-    results = assistant.update_knowledge_base(["course_data/"])
-    # # 提问示例
-    # response = assistant.ask("软件工程的定义是什么？")
-    # print("回答:", response)
-    # response = assistant.ask("什么是Multi-Head Attention？")
-    # print("回答:", response)
-    # response = assistant.ask("作业1的智能仓储机器人系统状态图如何构建？")
-    # print("回答:", response)
-    # response = assistant.ask("请详细的介绍Waterfall Model模型。")
-    # print("回答:", response)
-    # response = assistant.ask("练习.json中的第3题答案是什么？为什么?")
-    # print("回答:", response)
+    # results = assistant.update_knowledge_base(["course_data/"])
+
     # 启动Web服务（在新线程中）
-    threading.Thread(target=start_flask_app, daemon=True).start()
+    threading.Thread(target=start_fastapi_app, daemon=True).start()
+    print("服务已启动。请通过API接口进行操作。")
+    print("  - POST /update: 启动知识库更新")
+    print("  - GET /update-status: 查看更新状态")
+    print("  - POST /ask: 进行提问")
+    print("  - GET /status: 查看系统基本状态")
 
     # 保持主线程运行
     try:
         while True:
-            pass
+            time.sleep(1)  # 降低CPU占用
     except KeyboardInterrupt:
         print("\n服务已停止")
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/

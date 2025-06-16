@@ -450,19 +450,6 @@ class JSONProcessor(DataProcessor):
                     content=str(data),
                     metadata={'type': 'simple_value'}
                 ))
-
-            # 添加调试信息和文档内容验证
-            print(f"成功处理JSON文档，生成 {len(documents)} 个文档片段")
-            for i, doc in enumerate(documents):
-                print(f"文档 {i + 1}: 类型={doc.metadata.get('type')}, 内容长度={len(doc.page_content)}")
-                if doc.metadata.get('type') == 'question':
-                    print(
-                        f"  题目ID: {doc.metadata.get('question_id')}, 题目编号: {doc.metadata.get('question_number')}")
-
-                # 验证文档内容完整性
-                if len(doc.page_content.strip()) == 0:
-                    print(f"  警告: 文档{i + 1}内容为空!")
-
             return documents
 
         except Exception as e:

@@ -112,6 +112,7 @@ class KnowledgeBaseManager:
         Returns:
             被删除的文件路径列表
         """
+
         try:
             # 获取数据库中所有文件记录
             recorded_files = self.db_manager.get_all_file_records()
@@ -120,6 +121,7 @@ class KnowledgeBaseManager:
                 # 检查文件是否仍然存在
                 if not os.path.exists(file_path):
                     print(f"检测到已删除文件: {file_path}")
+                    deleted_files.append(file_path)
                     # 从知识库中移除相关数据
                     self.db_manager.remove_file_record(file_path)
 
@@ -141,7 +143,7 @@ class KnowledgeBaseManager:
             同步结果统计
         """
         sync_results = {
-            'processed_files': {},
+            'processed_files': 0,
             'deleted_files': [],
             'total_processed': 0,
             'errors': []
