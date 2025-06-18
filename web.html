@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Neo4j 数据可视化</title>
-    <!-- Cytoscape.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.23.0/cytoscape.min.js"></script>
-    <!-- Neo4j Driver -->
     <script src="https://cdn.jsdelivr.net/npm/neo4j-driver@5.11.0/lib/browser/neo4j-web.min.js"></script>
     <style>
         * {
@@ -218,9 +216,9 @@
 
         // Neo4j 连接配置
         const neo4jConfig = {
-            server_url: "bolt://localhost:7687", // 替换为您的Neo4j服务器URL
-            server_user: "neo4j",                // 替换为您的用户名
-            server_password: "password"         // 替换为您的密码
+            server_url: "bolt://localhost:7687",
+            server_user: "neo4j",
+            server_password: "12345678"
         };
 
         // 初始查询（包含关系和节点）
@@ -495,12 +493,11 @@
                     }
                 }
 
-                // 渲染结果
-                renderGraph(elements);
-
-                // 更新状态
+                // 隐藏加载动画
                 document.getElementById('loading').style.display = 'none';
-                updateStatus(`查询完成。显示 ${nodeMap.size} 个节点和 ${elements.length - nodeMap.size} 条关系`);
+
+                // 渲染结果
+                renderGraph(elements, nodeMap.size, elements.length - nodeMap.size);
 
             } catch (error) {
                 document.getElementById('loading').style.display = 'none';
@@ -579,8 +576,8 @@
             };
         }
 
-        // 渲染图
-        function renderGraph(elements) {
+        // 渲染图 (主要修改点)
+        function renderGraph(elements, nodeCount, edgeCount) {
             if (!cy) {
                 initCytoscape();
             }
@@ -592,7 +589,7 @@
             const layout = cy.layout({
                 name: physicsEnabled ? 'cose' : 'grid',
                 animate: true,
-                animationDuration: 500,
+                animationDuration: 500, // 初始动画时间
                 fit: true,
                 padding: 50,
                 nodeDimensionsIncludeLabels: true,
@@ -603,6 +600,22 @@
 
             layout.run();
             cy.fit();
+
+            // ================= 新增代码：自动刷新视图以解决拥挤问题 =================
+            if (physicsEnabled) {
+                updateStatus("查询完成，正在优化视图...");
+                // 在初始动画结束后，自动关闭再开启物理引擎
+                setTimeout(() => {
+                    togglePhysics(); // 关闭物理引擎，切换到grid
+                    setTimeout(() => {
+                        togglePhysics(); // 重新开启物理引擎，切换回cose
+                        updateStatus(`查询完成。显示 ${nodeCount} 个节点和 ${edgeCount} 条关系 (视图已优化)`);
+                    }, 150); // 短暂延迟后重新开启
+                }, 600); // 延迟时间应略长于初始动画时间
+            } else {
+                updateStatus(`查询完成。显示 ${nodeCount} 个节点和 ${edgeCount} 条关系`);
+            }
+            // ====================================================================
         }
 
         // 初始化可视化
@@ -661,7 +674,7 @@
             document.getElementById('physicsToggle').textContent =
                 `⚡ 物理引擎:${physicsEnabled ? '开启' : '关闭'}`;
 
-            if (cy) {
+            if (cy && cy.nodes().length > 0) {
                 const layout = cy.layout({
                     name: physicsEnabled ? 'cose' : 'grid',
                     animate: true,
@@ -674,7 +687,7 @@
                 });
 
                 layout.run();
-                updateStatus(`物理引擎: ${physicsEnabled ? '开启' : '关闭'}`);
+                updateStatus(`物理引擎已${physicsEnabled ? '开启' : '关闭'}`);
             }
         }
 

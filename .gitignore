@@ -1,2 +1,4 @@
 models--shibing624--text2vec-base-chinese/
+__pycache__/
+*.pyc
 *.md
