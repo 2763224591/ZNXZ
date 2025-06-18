@@ -20,6 +20,6 @@ GET /update-status: 查看更新状态
 POST /ask: 进行提问
 
 示例
->curl -X POST -H "Content-Type: application/json" -d "{\"question\":\"软件工程的定义是什么？\"}" http://localhost:9000/ask
+>curl -X POST -H "Content-Type: application/json" -d '{"question":"软件工程的定义是什么？"}' http://localhost:9000/ask
 
 GET /status: 查看系统基本状态
