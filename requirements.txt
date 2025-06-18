@@ -1,0 +1,15 @@
+cryptography
+fastapi
+langchain
+langchain_community
+langchain_core
+langchain_neo4j
+mammoth
+openai
+pydantic
+python_docx
+starlette
+torch
+text2vec
+uvicorn
+tiktoken

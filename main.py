@@ -5,8 +5,9 @@
 from typing import List, Dict, Any, Optional, Tuple
 import threading
 import time
-
+import os
 from fastapi import FastAPI, HTTPException
+from starlette.responses import FileResponse
 from pydantic import BaseModel
 
 import uvicorn
@@ -84,20 +85,42 @@ class SoftwareEngineeringAssistant:
 # ================================
 # 初始化与环境配置
 # ================================
+def get_neo4j_settings():
+    """从环境变量获取Neo4j配置"""
+    return {
+        "url": os.getenv("NEO4J_URL", "bolt://localhost:7687"),
+        "username": os.getenv("NEO4J_USERNAME", "neo4j"),
+        "password": os.getenv("NEO4J_PASSWORD", "12345678")
+    }
+
 # Press the green button in the gutter to run the script.
 llm_api = LlmApi()
 print("=== 使用统一的LlmApi API ===")
-# 全局大模型实例
-Neo4jSetting = {
-    "url": "bolt://localhost:7687",
-    "username": "neo4j",
-    "password": "12345678"
-}
+
+# 从环境变量获取Neo4j配置
+Neo4jSetting = get_neo4j_settings()
+print(f"Neo4j配置: {Neo4jSetting['url']}")
+
 # 初始化时传入配置
 assistant = SoftwareEngineeringAssistant(llm_api, Neo4jSetting)
-# 检查系统状态
-status = assistant.get_system_status()
-print("系统状态:", status)
+
+# 等待数据库连接
+max_retries = 30
+retry_count = 0
+while retry_count < max_retries:
+    try:
+        status = assistant.get_system_status()
+        if "错误" not in status["database_status"]:
+            print("数据库连接成功!")
+            print("系统状态:", status)
+            break
+    except Exception as e:
+        print(f"等待数据库连接... ({retry_count + 1}/{max_retries})")
+        time.sleep(2)
+        retry_count += 1
+
+if retry_count >= max_retries:
+    print("数据库连接失败，但继续启动服务...")
 
 # ================================
 # 任务状态管理
@@ -154,14 +177,7 @@ class StatusResponse(BaseModel):
 
 
 class UpdateResponse(BaseModel):
-    # TODO 应该需要修改
-    # 根据kb_manager.sync_knowledge_base的实际返回调整模型
-    # 这里假设返回的是一个字典，您可以根据实际情况修改
-    processed_files: Optional[int] = None
-    deleted_files: Optional[List[str]] = None
-    total_processed: Optional[int] = None
-    errors: Optional[List[str]] = None
-    message: Optional[str] = None  # 用于返回非成功时的消息
+    message: str  # 异步动作，只能做到回复消息
 
 
 # 新增：更新任务状态的响应模型
@@ -243,10 +259,27 @@ async def handle_update_status():
 
         return UpdateStatusResponse(**update_task_status)
 
+
+@app.get("/web", response_class=FileResponse, summary="提供数据可视化主页")
+async def serve_visualization_page():
+    """
+    当用户访问服务器的根URL时，返回 web.html 文件。
+    这是正确的服务器部署方式。
+    """
+    file_name = "web.html"
+
+    # 检查文件是否存在
+    if not os.path.exists(file_name):
+        raise HTTPException(status_code=404, detail=f"错误: {file_name} 文件未找到。")
+
+    return FileResponse(file_name)
+
 def start_fastapi_app():
     """启动FastAPI应用"""
-    uvicorn.run(app, host="localhost", port=9000)
-    print("Web服务已启动，监听端口 9000")
+    # 在Docker环境中绑定到所有接口
+    host = "0.0.0.0" if os.getenv("DOCKER_ENV") else "localhost"
+    uvicorn.run(app, host=host, port=9000)
+    print(f"Web服务已启动，监听 {host}:9000")
 
 
 if __name__ == "__main__":
@@ -260,6 +293,7 @@ if __name__ == "__main__":
     print("  - GET /update-status: 查看更新状态")
     print("  - POST /ask: 进行提问")
     print("  - GET /status: 查看系统基本状态")
+    print("  - GET /web: 访问可视化界面")
 
     # 保持主线程运行
     try:
