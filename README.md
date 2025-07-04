@@ -22,6 +22,6 @@ POST /ask: 进行提问
 示例
 >curl -X POST -H "Content-Type: application/json" -d "{\"question\":\"软件工程的定义是什么？\"}" http://localhost:9000/ask
 
-（这里的示例包含转移符号，请使用txt模式复制粘贴）
+（这里的示例包含转义符号，请使用txt模式复制粘贴）
 
 GET /status: 查看系统基本状态
